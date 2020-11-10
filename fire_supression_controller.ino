@@ -7,6 +7,7 @@
  * Button code pulled from here: https://tttapa.github.io/ESP8266/Chap10%20-%20Simple%20Web%20Server.html
  * 
  */
+#include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <ESP8266WiFiMulti.h> 
@@ -26,12 +27,29 @@ void handle_root();
 void connect_to_wifi();
 void setup_server();
 void handle_gas_button();
+void configureOTA();
 
 // globals
-const char* ssid = "REPLACE_WITH_YOUR_SSID";
-const char* password = "REPLACE_WITH_YOUR_PASSWORD";
+const char* ssid1 = "test_SSID";
+const char* password1 = "izbananas";
+
+const char* ssid2 = "NATural20";
+const char* password2 = "Foxland5!";
+
+String home_html = R"=====(
+  <!DOCTYPE html>
+  <html>
+  <body>
+    <h2> Smoke sensor value %val% </h2>
+    <form action="/GAS" method="POST"><input type="submit" value="Toggle Gas"></form>
+  </body>
+  </html>
+
+)=====";
+
 ESP8266WiFiMulti wifiMulti;
 ESP8266WebServer server(80);
+int cur_smoke = 0;
 
 
 void setup() {
@@ -39,19 +57,22 @@ void setup() {
   pinMode(VALVE_PIN, OUTPUT);
   digitalWrite(VALVE_PIN, LOW);
   connect_to_wifi();
+  setup_server();
+  configureOTA();
 
   Serial.println("Fire supression system active");
 }
 
 void loop() {
-  auto smoke_val = get_smoke();
+  cur_smoke = get_smoke();
   Serial.print("Gas value: ");
-  Serial.println(smoke_val);
-  if(check_smoke(smoke_val)) {
+  Serial.println(cur_smoke);
+  if(check_smoke(cur_smoke)) {
     trigger_co2(VALVE_ONTIME);
     Serial.println("SMOKE EVENT DETECTED!!!");
   }
   server.handleClient();
+  ArduinoOTA.handle();
   delay(1000);
 }
 
@@ -63,8 +84,31 @@ void setup_server() {
   Serial.println("HTTP server started");
 }
 
+void configureOTA() {
+
+  ArduinoOTA.onStart([]() {
+    Serial.println("Start");
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  });
+  ArduinoOTA.begin();
+}
+
 void connect_to_wifi() {
-  wifiMulti.addAP(ssid, password);
+  wifiMulti.addAP(ssid1, password1);
+  wifiMulti.addAP(ssid2, password2);
   Serial.println("Connecting ...");
   int i = 0;
   while (wifiMulti.run() != WL_CONNECTED) { // Wait for the Wi-Fi to connect: scan for Wi-Fi networks, and connect to the strongest of the networks above
@@ -84,8 +128,16 @@ void connect_to_wifi() {
   }
 }
 
+void handle_gas_button() {
+  trigger_co2(1000);
+  server.sendHeader("Location","/");        // Add a header to respond with a new location for the browser to go to the home page again
+  server.send(303);   
+}
+
 void handle_root() {                         // When URI / is requested, send a web page with a button to toggle the LED
-  server.send(200, "text/html", "<form action=\"/GAS\" method=\"POST\"><input type=\"submit\" value=\"Toggle Gas\"></form>");
+  String tmp_page = home_html;
+  tmp_page.replace("%val%", String(cur_smoke));
+  server.send(200, "text/html", tmp_page);
 }
 
 int get_smoke() {
